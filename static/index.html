@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blog Automation - Webflow CMS</title>
+    <!-- Quill Rich Text Editor -->
+    <link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>Blog Automation</h1>
+            <p class="subtitle">Generate and publish blog posts to Webflow CMS</p>
+        </header>
+
+        <main class="main">
+            <form id="generateForm" class="form">
+                <div class="form-group">
+                    <label for="prompt" class="label">
+                        Blog Topic / Prompt
+                        <span class="required">*</span>
+                    </label>
+                    <textarea 
+                        id="prompt" 
+                        name="prompt" 
+                        rows="4" 
+                        class="textarea"
+                        placeholder="e.g., Write about the top 5 theaters in downtown Houston and what makes them special"
+                        required
+                    ></textarea>
+                    <small class="help-text">Describe what you want the blog post to be about</small>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="author_id" class="label">Author</label>
+                        <select 
+                            id="author_id" 
+                            name="author_id" 
+                            class="input"
+                        >
+                            <option value="">Loading authors...</option>
+                        </select>
+                        <small class="help-text">Select blog post author</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="category_id" class="label">Category</label>
+                        <select 
+                            id="category_id" 
+                            name="category_id" 
+                            class="input"
+                        >
+                            <option value="">Loading categories...</option>
+                        </select>
+                        <small class="help-text">Select blog post category</small>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="featured_image_url" class="label">Featured Image URL (optional)</label>
+                    <input 
+                        type="url" 
+                        id="featured_image_url" 
+                        name="featured_image_url" 
+                        class="input"
+                        placeholder="https://example.com/image.jpg"
+                    >
+                    <small class="help-text">Leave blank to auto-fetch from Unsplash</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="publish_date" class="label">Publish Date (optional)</label>
+                    <input 
+                        type="datetime-local" 
+                        id="publish_date" 
+                        name="publish_date" 
+                        class="input"
+                    >
+                    <small class="help-text">Defaults to today if not specified</small>
+                </div>
+
+                <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                        <input 
+                            type="checkbox" 
+                            id="publish" 
+                            name="publish"
+                            class="checkbox"
+                        >
+                        <span>Publish immediately (uncheck to save as draft)</span>
+                    </label>
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="submitBtn">
+                    <span class="btn-text">Generate Blog Post</span>
+                    <span class="btn-loader" style="display: none;">
+                        <span class="spinner"></span>
+                        Generating...
+                    </span>
+                </button>
+            </form>
+
+            <div id="result" class="result" style="display: none;">
+                <!-- Result will be inserted here -->
+            </div>
+
+            <div id="editSection" class="edit-section" style="display: none;">
+                <h3>Edit Content</h3>
+                
+                <div class="form-group">
+                    <label for="edit_title" class="label">Title</label>
+                    <input type="text" id="edit_title" class="input">
+                </div>
+
+                <div class="form-group">
+                    <label for="edit_subtitle" class="label">Subtitle</label>
+                    <textarea id="edit_subtitle" rows="2" class="textarea"></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="edit_body" class="label">Body HTML</label>
+                    <textarea id="edit_body" rows="15" class="textarea"></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label class="label">Rich Text Editor</label>
+                    <div id="richTextEditor" style="background: white; min-height: 300px;"></div>
+                    <small class="help-text">Edit visually here - changes sync with HTML above</small>
+                </div>
+
+                <div class="form-group">
+                    <label class="label">Featured Image</label>
+                    <button type="button" class="btn btn-secondary" id="searchImagesBtn">
+                        <span class="btn-text">Search Images</span>
+                        <span class="btn-loader" style="display: none;">
+                            <span class="spinner"></span>
+                            Searching...
+                        </span>
+                    </button>
+                    <small class="help-text">Search Unsplash for featured images based on your content</small>
+                </div>
+
+                <div id="imageGallery" style="display: none; margin-top: 1rem;">
+                    <p style="margin-bottom: 0.75rem; color: #6B7280; font-size: 0.875rem;">
+                        <strong>Search query:</strong> <span id="imageQuery"></span>
+                    </p>
+                    <div id="imageGrid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem;"></div>
+                </div>
+
+                <div class="form-group">
+                    <label class="label">Related Content Banner</label>
+                    <button type="button" class="btn btn-secondary" id="generateBannerBtn">
+                        <span class="btn-text">Generate Related Content</span>
+                        <span class="btn-loader" style="display: none;">
+                            <span class="spinner"></span>
+                            Finding...
+                        </span>
+                    </button>
+                    <small class="help-text">AI will find the most relevant content from your site to feature</small>
+                </div>
+
+                <div id="bannerFields" style="display: none;">
+                    <div class="form-group">
+                        <label for="banner_title" class="label">Banner Title</label>
+                        <input type="text" id="banner_title" class="input" readonly>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="banner_description" class="label">Banner Description</label>
+                        <textarea id="banner_description" rows="2" class="textarea" readonly></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="banner_link" class="label">Banner Link</label>
+                        <input type="url" id="banner_link" class="input" readonly>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="label">Banner Image</label>
+                        <div id="banner_image_preview" style="margin-top: 0.5rem;"></div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="label">Auto-Link Artists, Shows & Services</label>
+                    <button type="button" class="btn btn-secondary" id="autoLinkBtn">
+                        <span class="btn-text">Find Matches</span>
+                        <span class="btn-loader" style="display: none;">
+                            <span class="spinner"></span>
+                            Searching...
+                        </span>
+                    </button>
+                    <small class="help-text">Scans your content for artist/show names and VIP/Corporate/Educational/Holiday needs, and finds matching pages.</small>
+                </div>
+
+                <div id="autoLinkResults" style="display: none; margin-top: 1rem;">
+                    <div style="padding: 1rem; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px;">
+                        <h4 style="margin: 0 0 0.5rem 0;">Suggested Links</h4>
+                        <div id="autoLinkArtists" style="margin-top: 0.5rem;"></div>
+                        <div id="autoLinkShows" style="margin-top: 0.5rem;"></div>
+                        <div id="autoLinkServices" style="margin-top: 0.5rem;"></div>
+                        <div style="margin-top: 0.75rem;">
+                            <button type="button" class="btn btn-primary" id="importLinksBtn">
+                                <span class="btn-text">Insert Links Into Body</span>
+                                <span class="btn-loader" style="display: none;">
+                                    <span class="spinner"></span>
+                                    Inserting...
+                                </span>
+                            </button>
+                        </div>
+                        <div id="autoLinkSummary" style="margin-top: 0.75rem;"></div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="ai_edit_prompt" class="label">Edit with AI</label>
+                    <input 
+                        type="text" 
+                        id="ai_edit_prompt" 
+                        class="input" 
+                        placeholder="e.g., Make the title shorter, add more details to the first section, etc."
+                    >
+                    <small class="help-text">Describe what you want to change - AI will preserve citations and make targeted edits</small>
+                </div>
+
+                <div class="button-group">
+                    <button type="button" class="btn btn-secondary" id="aiEditBtn">
+                        <span class="btn-text">Apply AI Edits</span>
+                        <span class="btn-loader" style="display: none;">
+                            <span class="spinner"></span>
+                            Editing...
+                        </span>
+                    </button>
+                    <button type="button" class="btn btn-primary" id="saveBtn">
+                        💾 Save to Webflow
+                    </button>
+                </div>
+
+                <div id="editResult" style="margin-top: 1rem;"></div>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <p>Powered by OpenAI GPT-4o + Webflow CMS API v2</p>
+        </footer>
+    </div>
+
+    <!-- Quill Rich Text Editor Library -->
+    <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
+    <script src="/script.js"></script>
+</body>
+</html>
+
+
