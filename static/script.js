@@ -10,6 +10,8 @@
   const saveBtn     = document.getElementById('saveBtn');
   const aiEditBtn   = document.getElementById('aiEditBtn');
   const searchImagesBtn = document.getElementById('searchImagesBtn');
+  const searchImagesCustomBtn = document.getElementById('searchImagesCustomBtn');
+  const customImageQuery = document.getElementById('customImageQuery');
   const imageGallery = document.getElementById('imageGallery');
   const imageGrid = document.getElementById('imageGrid');
   const imageQuery = document.getElementById('imageQuery');
@@ -31,15 +33,11 @@
     if (loading) {
       btn.disabled = true;
       const text = btn.querySelector('.btn-text');
-      const loader = btn.querySelector('.btn-loader');
-      if (text) text.style.display = 'none';
-      if (loader) loader.style.display = 'inline-flex';
+      if (text) text.style.opacity = '0.6';
     } else {
       btn.disabled = false;
       const text = btn.querySelector('.btn-text');
-      const loader = btn.querySelector('.btn-loader');
-      if (text) text.style.display = 'inline';
-      if (loader) loader.style.display = 'none';
+      if (text) text.style.opacity = '1';
     }
   }
 
@@ -452,6 +450,35 @@
     }
   });
 
+  // Manual query image search handler
+  if (searchImagesCustomBtn) {
+    searchImagesCustomBtn.addEventListener('click', async () => {
+      const q = (customImageQuery && customImageQuery.value ? customImageQuery.value.trim() : '');
+      if (!q) {
+        alert('Please enter a search query');
+        return;
+      }
+      setLoading(searchImagesCustomBtn, true);
+      imageGallery.style.display = 'none';
+      try {
+        const response = await fetch('/search-images', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q })
+        });
+        const data = await response.json();
+        if (response.ok && data.ok) {
+          displayImageResults(data.query, data.images);
+        } else {
+          throw new Error(data.error || 'Image search failed');
+        }
+      } catch (error) {
+        alert('Failed to search images: ' + error.message);
+      } finally {
+        setLoading(searchImagesCustomBtn, false);
+      }
+    });
+  }
   function displayImageResults(query, images) {
     imageQuery.textContent = query;
     imageGrid.innerHTML = '';

@@ -849,41 +849,46 @@ def search_images():
     
     title = payload.get("title", "").strip()
     body = payload.get("body", "").strip()
+    query_override = (payload.get("query") or "").strip()
     
-    if not title:
-        return jsonify({"ok": False, "error": "Missing 'title'"}), 400
+    if not title and not query_override:
+        return jsonify({"ok": False, "error": "Missing 'title' or 'query'"}), 400
     
     try:
-        print(f"🔍 Generating Unsplash search query for: {title[:50]}...")
+        if query_override:
+            query = query_override[:100]
+            print(f"🔍 Using manual Unsplash query: {query}")
+        else:
+            print(f"🔍 Generating Unsplash search query for: {title[:50]}...")
         
-        client = OpenAI(api_key=OPENAI_API_KEY)
+            client = OpenAI(api_key=OPENAI_API_KEY)
         
-        # Generate search query using AI
-        system_prompt = (
-            "In 5 words or less, generate a stock image search query for an article. "
-            "Return ONLY strict JSON: {\"q\": string}. Do not wrap in markdown. "
-            "Focus on visual concepts that would make good photos."
-        )
+            # Generate search query using AI
+            system_prompt = (
+                "In 5 words or less, generate a stock image search query for an article. "
+                "Return ONLY strict JSON: {\"q\": string}. Do not wrap in markdown. "
+                "Focus on visual concepts that would make good photos."
+            )
         
-        user_prompt = f"TITLE: {title}\n\nBODY PREVIEW: {body[:500]}"
+            user_prompt = f"TITLE: {title}\n\nBODY PREVIEW: {body[:500]}"
         
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.7
-        )
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.7
+            )
         
-        content = response.choices[0].message.content.strip()
-        content = re.sub(r"^```json\s*|```$", "", content, flags=re.DOTALL | re.MULTILINE)
+            content = response.choices[0].message.content.strip()
+            content = re.sub(r"^```json\s*|```$", "", content, flags=re.DOTALL | re.MULTILINE)
         
-        try:
-            data = json.loads(content)
-            query = data.get("q", title)[:100]
-        except:
-            query = title[:100]
+            try:
+                data = json.loads(content)
+                query = data.get("q", title)[:100]
+            except:
+                query = title[:100]
         
         print(f"📝 Unsplash search query: {query}")
         
