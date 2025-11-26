@@ -2,6 +2,8 @@ import os
 import json
 import math
 import re
+import hashlib
+import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,6 +12,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from openai import OpenAI
 from dotenv import load_dotenv
 import unicodedata
+from werkzeug.datastructures import FileStorage
 
 # Load environment variables from .env file if it exists
 load_dotenv()
@@ -59,12 +62,17 @@ def _upload_asset(binary: bytes, filename: str) -> tuple[str, str]:
 
     # 1) Create asset record and get pre-signed S3 URL
     meta_endpoint = f"{BASE_URL}/sites/{WEBFLOW_SITE_ID}/assets"
+    # Compute SHA-256 hash for fileHash (required by API)
+    file_hash = hashlib.sha256(binary).hexdigest()
+    # Guess content type
+    guessed_type, _ = mimetypes.guess_type(filename)
+    content_type = guessed_type or "image/jpeg"
     meta_resp = requests.post(
         meta_endpoint,
         headers=HEADERS,
         json={
             "fileName": filename,
-            # fileHash is optional in v2; included for better caching when available
+            "fileHash": file_hash,
         },
         timeout=30,
     )
@@ -76,7 +84,7 @@ def _upload_asset(binary: bytes, filename: str) -> tuple[str, str]:
     fields = {k: str(v) for k, v in meta.get("uploadDetails", {}).items()}
 
     files = {
-        "file": (filename, binary, meta.get("contentType", "image/jpeg")),
+        "file": (filename, binary, meta.get("contentType", content_type)),
     }
 
     # 2) Upload file to S3
@@ -138,7 +146,7 @@ def create_blog_post_item(*, title: str, subtitle: str, body_html: str, author_i
                           publish: bool, publish_date_iso: str | None,
                           banner_title: str | None = None, banner_description: str | None = None,
                           banner_image: str | None = None, banner_link: str | None = None,
-                          banner_category: str | None = None) -> dict:
+                          banner_category: str | None = None, video_embed: str | None = None) -> dict:
     if not WEBFLOW_COLLECTION_ID:
         raise RuntimeError("Missing WEBFLOW_COLLECTION_ID")
 
@@ -171,6 +179,9 @@ def create_blog_post_item(*, title: str, subtitle: str, body_html: str, author_i
     if banner_category:
         # Capitalize the category before sending to Webflow
         field_data["banner-category"] = banner_category.capitalize() if isinstance(banner_category, str) else banner_category
+    # Add video embed field if provided
+    if video_embed:
+        field_data["video-embed"] = video_embed
 
     payload = {
         "isDraft": not publish,
@@ -549,6 +560,7 @@ def generate_banner():
     
     title = payload.get("title", "").strip()
     body = payload.get("body", "").strip()
+    manual_url = (payload.get("url") or "").strip()
     
     if not title or not body:
         return jsonify({"ok": False, "error": "Missing 'title' or 'body'"}), 400
@@ -566,6 +578,30 @@ def generate_banner():
             search_index = json.load(f)
         
         print(f"📚 Loaded {len(search_index)} items from search index")
+
+        # If user provided a URL, try to find exact match in index and return directly
+        if manual_url:
+            def norm(u: str) -> str:
+                u = (u or "").strip()
+                return u[:-1] if u.endswith("/") else u
+            target = norm(manual_url)
+            matched_item = None
+            for item in search_index:
+                if norm(item.get("url", "")) == target:
+                    matched_item = item
+                    break
+            if matched_item:
+                banner = {
+                    "title": matched_item.get("title", ""),
+                    "description": matched_item.get("description", ""),
+                    "link": matched_item.get("url", ""),
+                    "image": matched_item.get("image"),
+                    "category": matched_item.get("category", "")
+                }
+                print(f"✅ Manual URL matched in index. Using: {banner['link']}")
+                return jsonify({"ok": True, "banner": banner})
+            else:
+                print(f"ℹ️ Manual URL not found in index. Falling back to AI selection.")
         
         client = OpenAI(api_key=OPENAI_API_KEY)
         
@@ -1007,6 +1043,7 @@ def create_draft():
     banner_image = payload.get("banner_image")
     banner_link = payload.get("banner_link")
     banner_category = payload.get("banner_category")
+    video_embed = payload.get("video_embed")
 
     previous_item_id = payload.get("previous_item_id")
 
@@ -1038,6 +1075,7 @@ def create_draft():
             banner_image=banner_image,
             banner_link=banner_link,
             banner_category=banner_category,
+            video_embed=video_embed,
         )
         
         # Add preview link to the response
@@ -1078,6 +1116,35 @@ def publish_draft():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
+
+@app.post("/upload-image")
+def upload_image():
+    """
+    Upload a user-provided image file to Webflow Assets and return hosted URL.
+    Expects multipart/form-data with a 'file' field.
+    """
+    try:
+        if "file" not in request.files:
+            return jsonify({"ok": False, "error": "Missing 'file'"}), 400
+        file: FileStorage = request.files["file"]
+        if not file or file.filename == "":
+            return jsonify({"ok": False, "error": "No file selected"}), 400
+        filename = os.path.basename(file.filename) or "upload.jpg"
+        data = file.read()
+        if not data:
+            return jsonify({"ok": False, "error": "Empty file"}), 400
+        # Upload to Webflow Assets
+        file_id, hosted_url = _upload_asset(data, filename)
+        return jsonify({
+            "ok": True,
+            "image": {"url": hosted_url, "alt": filename},
+            "file_id": file_id
+        })
+    except Exception as e:
+        print(f"❌ Image upload failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"ok": False, "error": str(e)}), 500
 # Exported app for Vercel
 if __name__ == "__main__":
     # Local dev server

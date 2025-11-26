@@ -12,6 +12,10 @@
   const searchImagesBtn = document.getElementById('searchImagesBtn');
   const searchImagesCustomBtn = document.getElementById('searchImagesCustomBtn');
   const customImageQuery = document.getElementById('customImageQuery');
+  const uploadImageInput = document.getElementById('uploadImageInput'); // (edit section) may not exist
+  const uploadImageBtn = document.getElementById('uploadImageBtn'); // (edit section) may not exist
+  const uploadImageInputInit = document.getElementById('uploadImageInputInit');
+  const uploadImageBtnInit = document.getElementById('uploadImageBtnInit');
   const imageGallery = document.getElementById('imageGallery');
   const imageGrid = document.getElementById('imageGrid');
   const imageQuery = document.getElementById('imageQuery');
@@ -214,6 +218,7 @@
         title: document.getElementById('edit_title').value,
         subtitle: document.getElementById('edit_subtitle').value,
         body: document.getElementById('edit_body').value,
+        video_embed: (document.getElementById('video_embed') && document.getElementById('video_embed').value) || null,
         author_id: formData.get('author_id') || null,
         category_id: formData.get('category_id') || null,
         featured_image: currentFeaturedImage,
@@ -554,10 +559,83 @@
     imageGallery.style.display = 'block';
   }
 
+  // Upload selected image to Webflow Assets
+  if (uploadImageBtn) {
+    uploadImageBtn.addEventListener('click', async () => {
+      if (!uploadImageInput || !uploadImageInput.files || uploadImageInput.files.length === 0) {
+        alert('Please choose an image first');
+        return;
+      }
+      const file = uploadImageInput.files[0];
+      setLoading(uploadImageBtn, true);
+      try {
+        const formDataUpload = new FormData();
+        formDataUpload.append('file', file, file.name || 'upload.jpg');
+        const response = await fetch('/upload-image', {
+          method: 'POST',
+          body: formDataUpload
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || 'Upload failed');
+        }
+        // Set featured image inputs/state
+        const featuredImageInput = document.getElementById('featured_image_url');
+        if (featuredImageInput) {
+          featuredImageInput.value = data.image.url;
+        }
+        currentFeaturedImage = data.image; // { url, alt }
+        // show simple confirmation
+        alert('Image uploaded and set as featured.');
+      } catch (e) {
+        alert(e.message || 'Upload failed');
+      } finally {
+        setLoading(uploadImageBtn, false);
+      }
+    });
+  }
+
+  // Upload selected image to Webflow Assets (initial form)
+  if (uploadImageBtnInit) {
+    uploadImageBtnInit.addEventListener('click', async () => {
+      if (!uploadImageInputInit || !uploadImageInputInit.files || uploadImageInputInit.files.length === 0) {
+        alert('Please choose an image first');
+        return;
+      }
+      const file = uploadImageInputInit.files[0];
+      setLoading(uploadImageBtnInit, true);
+      try {
+        const formDataUpload = new FormData();
+        formDataUpload.append('file', file, file.name || 'upload.jpg');
+        const response = await fetch('/upload-image', {
+          method: 'POST',
+          body: formDataUpload
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || 'Upload failed');
+        }
+        // Set featured image inputs/state
+        const featuredImageInput = document.getElementById('featured_image_url');
+        if (featuredImageInput) {
+          featuredImageInput.value = data.image.url;
+        }
+        currentFeaturedImage = data.image; // { url, alt }
+        alert('Image uploaded and set as featured.');
+      } catch (e) {
+        alert(e.message || 'Upload failed');
+      } finally {
+        setLoading(uploadImageBtnInit, false);
+      }
+    });
+  }
+
   // Banner generation handler
   generateBannerBtn.addEventListener('click', async () => {
     const title = document.getElementById('edit_title').value;
     const body = document.getElementById('edit_body').value;
+    const bannerUrlInput = document.getElementById('banner_url_input');
+    const manualUrl = bannerUrlInput ? bannerUrlInput.value.trim() : '';
     
     if (!title || !body) {
       alert('Please generate content first');
@@ -570,7 +648,7 @@
       const response = await fetch('/generate-banner', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, body })
+        body: JSON.stringify({ title, body, url: manualUrl || null })
       });
       
       const data = await response.json();
