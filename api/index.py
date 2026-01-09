@@ -222,7 +222,20 @@ def generate_content_with_openai(prompt: str) -> dict:
         "subtitle: [20-30 word engaging summary]\n"
         "body-html: [700-1000 word HTML content with <h5> headings, <p> paragraphs, <strong> emphasis, "
         "and inline <sup><a href='URL'>[n]</a></sup> citations]\n\n"
-        "Be informative and neutral. Cite sources inline with clickable superscript numbers."
+        "Be informative and neutral. Cite sources inline with clickable superscript numbers.\n"
+        "Be less technical about shows. Not looking for the actual info of pricing/how to get there/theater location/box office hours those type of things, the only info in that regard should be to lead them to a Broadway Plus show page/form/ or email when applicable or asked for. I want it to be more fun and engaging, really focusing on the 'why' as in 'why should someone want to see this show?' "
+        "Avoid including ANY of these links or terms: \n"
+        "TDF	https://www.tdf.org/"
+        "TKTS - TDF	https://www.tdf.org/discount-ticket-programs/tkts-by-tdf/tkts-live/"
+        "Broadway Box	broadwaybox.com"
+        "Broadway.com	broadway.com"
+        "Today Tix	https://www.todaytix.com"
+        "Ticketmaster	https://www.ticketmaster.com/"
+        "Stub Hub	stubhub.com"
+        "Broadway Direct	https://broadwaydirect.com/"
+        "Broadway.org	Broadway.org"
+        "Broadway Show Tickets	https://www.broadway-show-tickets.com/"
+        "Broadway Inbound	https://www.broadwayinbound.com"
     )
 
     print("🔍 Calling GPT-5 with web search...")
