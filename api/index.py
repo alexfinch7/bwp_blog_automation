@@ -238,17 +238,17 @@ def generate_content_with_openai(prompt: str) -> dict:
         "Broadway Inbound	https://www.broadwayinbound.com"
     )
 
-    print("🔍 Calling GPT-5 with web search...")
-    
+    print("🔍 Calling GPT-6.1 Terra with web search...")
+
     # Use Responses API with web search
     response = client.responses.create(
-        model="gpt-5",
+        model="gpt-6.1-terra",
         tools=[{"type": "web_search"}],
         input=content_prompt,
         reasoning={"effort": "low"}
     )
-    
-    print("✅ GPT-5 response received!")
+
+    print("✅ GPT-6.1 Terra response received!")
     
     # Extract the message content with annotations
     message_text = None
@@ -264,7 +264,7 @@ def generate_content_with_openai(prompt: str) -> dict:
                     print(f"📚 Found {len(annotations)} inline citations")
     
     if not message_text:
-        raise RuntimeError("No text content in GPT-5 response")
+        raise RuntimeError("No text content in GPT-6.1 Terra response")
     
     # Step 2: Try to parse the simple format
     try:
@@ -637,7 +637,7 @@ Return ONLY a valid JSON object with this EXACT structure:
 Choose the ONE item that is most thematically related and would be most interesting to readers of this blog post. Return ONLY the JSON, no other text."""
 
         response = client.responses.create(
-            model="gpt-5",
+            model="gpt-6.1-terra",
             input=prompt,
             reasoning={"effort": "medium"}
         )
