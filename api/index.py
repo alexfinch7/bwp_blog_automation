@@ -775,6 +775,8 @@ def _apply_inline_links(body_html: str) -> tuple[str, list[dict]]:
         search_index = json.load(f)
 
     entries = []
+    full_titles_norm = set()
+    alias_candidates: dict[str, list] = {}  # normalized alias -> [(alias, url)]
     for item in search_index:
         cat = (item.get("category") or "").lower()
         if cat not in ("shows", "artists"):
@@ -784,13 +786,37 @@ def _apply_inline_links(body_html: str) -> tuple[str, list[dict]]:
         # Very short titles ("Six") risk matching ordinary words; require 3+ chars
         if len(title) < 3 or not url:
             continue
+        full_titles_norm.add(_normalize_for_match(title))
         entries.append({
             "title": title,
             "url": url,
-            "single_word": " " not in title,
+            "strict_case": " " not in title,
             "pattern": _title_to_pattern(title),
         })
-    # Longest title first so "The Rocky Horror Show" wins over a shorter overlapping title
+        # Shows like "Dolly: A True Original" are often mentioned as just "Dolly" —
+        # collect the pre-subtitle short form as an alias candidate
+        if cat == "shows":
+            short = re.split(r"\s*[:(]", title, maxsplit=1)[0].strip()
+            if len(short) >= 3 and short != title:
+                alias_candidates.setdefault(_normalize_for_match(short), []).append((short, url))
+
+    # Keep only unambiguous aliases: not another show's full title, not shared by
+    # multiple pages. Aliases are riskier, so they require exact capitalization.
+    for norm, variants in alias_candidates.items():
+        if norm in full_titles_norm:
+            continue
+        if len({u for _, u in variants}) != 1:
+            continue
+        alias, url = variants[0]
+        entries.append({
+            "title": alias,
+            "url": url,
+            "strict_case": True,
+            "pattern": _title_to_pattern(alias),
+        })
+
+    # Longest title first so "The Rocky Horror Show" wins over a shorter overlapping
+    # title, and full titles win over their own short aliases
     entries.sort(key=lambda e: len(e["title"]), reverse=True)
 
     soup = BeautifulSoup(body_html or "", "html.parser")
@@ -816,11 +842,22 @@ def _apply_inline_links(body_html: str) -> tuple[str, list[dict]]:
             if not allow_defer and in_tags(text_node, _LINK_DEFER_TAGS):
                 continue
             match = None
-            for candidate in entry["pattern"].finditer(str(text_node)):
-                # Single-word titles must keep their exact capitalization ("Giant",
-                # not "giant") so we don't link ordinary words mid-sentence.
-                if entry["single_word"] and candidate.group(0) != entry["title"]:
-                    continue
+            raw_text = str(text_node)
+            for candidate in entry["pattern"].finditer(raw_text):
+                if entry["strict_case"]:
+                    # Single-word titles and short aliases must keep their exact
+                    # capitalization ("Giant", not "giant"; "Drag", not "drag") so we
+                    # don't link ordinary words mid-sentence.
+                    if candidate.group(0) != entry["title"]:
+                        continue
+                    # Reject matches that continue into a longer proper noun:
+                    # "Dolly Parton" must not link to "Dolly: A True Original".
+                    tail = raw_text[candidate.end():]
+                    if not tail.strip():
+                        nxt = text_node.find_next(string=True)
+                        tail = str(nxt) if nxt else ""
+                    if re.match(r"\s*[A-Z][\w'’-]*", tail):
+                        continue
                 match = candidate
                 break
             if not match:
