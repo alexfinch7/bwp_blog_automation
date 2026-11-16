@@ -883,62 +883,30 @@
     return { html: container.innerHTML, summary };
   }
 
-  // Import links with AI via /edit, using a composed prompt and JSON diff application
+  // Import links deterministically via /apply-links (wraps show/artist mentions in <a> tags)
   if (importLinksBtn) {
     importLinksBtn.addEventListener('click', async () => {
-      const title = document.getElementById('edit_title').value;
-      const subtitle = document.getElementById('edit_subtitle').value || '';
       const bodyEl = document.getElementById('edit_body');
       const oldBody = bodyEl.value || '';
-      if (!lastAutoLinkMatches) {
-        alert('Please click "Find Matches" first.');
+      if (!oldBody.trim()) {
+        alert('Please generate content first');
         return;
       }
-      const matches = lastAutoLinkMatches || {};
-      const artists = matches.artists || [];
-      const shows = matches.shows || [];
-      const services = matches.services || [];
-
-      const candidates = [];
-      artists.forEach(a => { if (a.title && a.url) candidates.push({ type: 'Artist', title: a.title, url: a.url }); });
-      shows.forEach(s => { if (s.title && s.url) candidates.push({ type: 'Show', title: s.title, url: s.url }); });
-      services.forEach(sv => { if (sv.title && sv.url) candidates.push({ type: 'Service', title: sv.title, url: sv.url }); });
-      if (!candidates.length) {
-        alert('No link candidates available.');
-        return;
-      }
-
-      const linksList = candidates.map(c => `- [${c.type}] ${c.title} -> ${c.url}`).join('\\n');
-      const editPrompt = `
-Embed hyperlinks into the HTML body where they fit naturally, using ONLY existing words/phrases as anchor text.
-- Anchor text should be the relevant word sequence already present (e.g., artist/show names, or service phrases like "group tickets" or "VIP").
-- Do NOT add a "Sources" section or any new sections.
-- Preserve all existing HTML, including <sup><a href='...'>[n]</a></sup> citations.
-- If a link does not fit naturally, skip it.
-- Make minimal edits beyond wrapping anchor tags.
-Links to consider:
-${linksList}
-Return JSON diff as previously specified (title, subtitle or 'NO CHANGE', and body_changes with precise find/replace).
-      `.trim();
 
       setLoading(importLinksBtn, true);
       if (autoLinkSummary) autoLinkSummary.innerHTML = '';
       try {
-        const resp = await fetch('/edit', {
+        const resp = await fetch('/apply-links', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title,
-            subtitle,
-            body: oldBody,
-            edit_prompt: editPrompt
-          })
+          body: JSON.stringify({ body: oldBody })
         });
         const data = await resp.json();
         if (!resp.ok || !data.ok) {
-          throw new Error(data.error || 'AI link insertion failed');
+          throw new Error(data.error || 'Link insertion failed');
         }
         const newBody = data.body || oldBody;
+        const inserted = data.inserted || [];
         bodyEl.value = newBody;
         if (quill) {
           syncInProgress = true;
@@ -946,29 +914,13 @@ Return JSON diff as previously specified (title, subtitle or 'NO CHANGE', and bo
           syncInProgress = false;
         }
 
-        // Summarize newly inserted links by comparing anchors before vs after, filtered to our candidate URLs
-        function extractAnchors(html) {
-          const frag = document.createElement('div');
-          frag.innerHTML = html || '';
-          const out = [];
-          frag.querySelectorAll('a[href]').forEach(a => {
-            out.push({ href: a.getAttribute('href') || '', text: (a.textContent || '').trim() });
-          });
-          return out;
-        }
-        const before = extractAnchors(oldBody);
-        const after = extractAnchors(newBody);
-        const candidateUrls = new Set(candidates.map(c => c.url));
-        const beforeSet = new Set(before.filter(a => candidateUrls.has(a.href)).map(a => a.href + '|' + a.text));
-        const added = after.filter(a => candidateUrls.has(a.href) && !beforeSet.has(a.href + '|' + a.text));
-
         if (autoLinkSummary) {
-          if (added.length) {
+          if (inserted.length) {
             autoLinkSummary.innerHTML = `
               <div style="margin-top: 0.5rem;">
                 <div style="font-weight:600; margin-bottom: 0.25rem;">Inserted Links:</div>
                 <ul style="margin:0; padding-left: 1rem;">
-                  ${added.map(s => `<li>${escapeHtml(s.text)} -> <a href="${s.href}" target="_blank" rel="noopener">${s.href}</a></li>`).join('')}
+                  ${inserted.map(s => `<li>${escapeHtml(s.title)} -> <a href="${s.url}" target="_blank" rel="noopener">${s.url}</a></li>`).join('')}
                 </ul>
               </div>
             `;

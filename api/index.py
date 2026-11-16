@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+from bs4 import BeautifulSoup, NavigableString
 from flask import Flask, jsonify, request, send_from_directory
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -223,6 +224,11 @@ def generate_content_with_openai(prompt: str) -> dict:
         "body-html: [700-1000 word HTML content with <h5> headings, <p> paragraphs, <strong> emphasis, "
         "and inline <sup><a href='URL'>[n]</a></sup> citations]\n\n"
         "Be informative and neutral. Cite sources inline with clickable superscript numbers.\n"
+        "HYPERLINK RULE: whenever you mention a show, artist, or Broadway Plus page by name, make the name itself "
+        "a clickable inline hyperlink using the name as the anchor text, e.g. "
+        "Learn more: <a href='https://www.broadwayplus.com/shows/the-show'>The Show</a>.<sup><a href='...'>[n]</a></sup> "
+        "NEVER write a bare URL out in the visible body text — the reader should only ever see the highlighted, "
+        "clickable name. Prefer broadwayplus.com show/artist pages when they exist.\n"
         "Be less technical about shows. Not looking for the actual info of pricing/how to get there/theater location/box office hours those type of things, the only info in that regard should be to lead them to a Broadway Plus show page/form/ or email when applicable or asked for. I want it to be more fun and engaging, really focusing on the 'why' as in 'why should someone want to see this show?' "
         "Avoid including ANY of these links or terms: \n"
         "TDF	https://www.tdf.org/"
@@ -485,6 +491,8 @@ Return ONLY valid JSON in this exact format (no markdown code blocks, no extra t
 
 CRITICAL RULES:
 - Keep <sup><a href='...'>[n]</a></sup> citations intact unless explicitly told to change them
+- Keep existing inline <a href='...'>...</a> hyperlinks intact unless explicitly told to change them
+- If asked to add a link to a show/page, hyperlink the name itself inline (anchor text = the name already in the text); NEVER paste a bare URL into the visible text
 - Output ONLY the JSON object, nothing else
 - Make "find" snippets as precise as possible to avoid duplicate matches
 - If only changing title/subtitle, make body_changes an empty array []
@@ -729,6 +737,142 @@ def _any_keyword_in(text: str, keywords: list[str]) -> bool:
         if _normalize_for_match(kw) in base:
             return True
     return False
+
+
+_LINK_SKIP_TAGS = {"a", "sup", "code", "pre", "script", "style"}
+# Prefer linking a plain-prose mention first; fall back to bold/heading mentions
+_LINK_DEFER_TAGS = {"strong", "b", "h1", "h2", "h3", "h4", "h5", "h6"}
+
+
+def _title_to_pattern(title: str) -> re.Pattern:
+    """Build a regex matching a title, tolerant of curly quotes, dash variants and spacing."""
+    parts = []
+    for ch in title:
+        if ch in "'‘’":
+            parts.append("['‘’]")
+        elif ch in "-–—":
+            parts.append("[-–—]")
+        elif ch == "&":
+            parts.append("(?:&|and)")
+        elif ch.isspace():
+            parts.append(r"\s+")
+        else:
+            parts.append(re.escape(ch))
+    return re.compile(rf"(?<!\w){''.join(parts)}(?!\w)", re.IGNORECASE)
+
+
+def _apply_inline_links(body_html: str) -> tuple[str, list[dict]]:
+    """
+    Deterministically wrap the first mention of each known show/artist name in the
+    body with <a href="...">Name</a>, pulling URLs from search_index.json.
+    Skips text already inside links, superscript citations, or code. Returns the
+    updated HTML and a summary of inserted links.
+    """
+    search_index_path = Path(__file__).parent.parent / "search_index.json"
+    if not search_index_path.exists():
+        return body_html, []
+    with open(search_index_path, "r", encoding="utf-8") as f:
+        search_index = json.load(f)
+
+    entries = []
+    for item in search_index:
+        cat = (item.get("category") or "").lower()
+        if cat not in ("shows", "artists"):
+            continue
+        title = (item.get("title") or "").strip()
+        url = (item.get("url") or "").strip()
+        # Very short titles ("Six") risk matching ordinary words; require 3+ chars
+        if len(title) < 3 or not url:
+            continue
+        entries.append({
+            "title": title,
+            "url": url,
+            "single_word": " " not in title,
+            "pattern": _title_to_pattern(title),
+        })
+    # Longest title first so "The Rocky Horror Show" wins over a shorter overlapping title
+    entries.sort(key=lambda e: len(e["title"]), reverse=True)
+
+    soup = BeautifulSoup(body_html or "", "html.parser")
+    plain_text = soup.get_text(" ")
+
+    linked_urls = {(a.get("href") or "").rstrip("/") for a in soup.find_all("a")}
+    summary = []
+
+    def in_tags(node, names) -> bool:
+        parent = node.parent
+        while parent is not None and parent.name is not None:
+            if parent.name in names:
+                return True
+            parent = parent.parent
+        return False
+
+    def try_link(entry: dict, allow_defer: bool) -> bool:
+        for text_node in soup.find_all(string=True):
+            if not isinstance(text_node, NavigableString) or not str(text_node).strip():
+                continue
+            if in_tags(text_node, _LINK_SKIP_TAGS):
+                continue
+            if not allow_defer and in_tags(text_node, _LINK_DEFER_TAGS):
+                continue
+            match = None
+            for candidate in entry["pattern"].finditer(str(text_node)):
+                # Single-word titles must keep their exact capitalization ("Giant",
+                # not "giant") so we don't link ordinary words mid-sentence.
+                if entry["single_word"] and candidate.group(0) != entry["title"]:
+                    continue
+                match = candidate
+                break
+            if not match:
+                continue
+            matched_text = match.group(0)
+            anchor = soup.new_tag("a", href=entry["url"])
+            anchor["target"] = "_blank"
+            anchor["rel"] = "noopener"
+            anchor.string = matched_text
+            raw = str(text_node)
+            text_node.replace_with(
+                NavigableString(raw[: match.start()]),
+                anchor,
+                NavigableString(raw[match.end():]),
+            )
+            return True
+        return False
+
+    for entry in entries:
+        if entry["url"].rstrip("/") in linked_urls:
+            continue
+        # Cheap prefilter: skip the DOM walk when the name never appears at all
+        if not entry["pattern"].search(plain_text):
+            continue
+        if try_link(entry, allow_defer=False) or try_link(entry, allow_defer=True):
+            linked_urls.add(entry["url"].rstrip("/"))
+            summary.append({"title": entry["title"], "url": entry["url"]})
+
+    return str(soup), summary
+
+
+@app.post("/apply-links")
+def apply_links():
+    """Deterministically hyperlink show/artist mentions in the body text."""
+    if request.is_json:
+        payload = request.get_json() or {}
+    else:
+        payload = request.form.to_dict() if request.form else {}
+
+    body = (payload.get("body") or "").strip()
+    if not body:
+        return jsonify({"ok": False, "error": "Missing 'body'"}), 400
+
+    try:
+        new_body, inserted = _apply_inline_links(body)
+        print(f"🔗 Inline links inserted: {len(inserted)}")
+        return jsonify({"ok": True, "body": new_body, "inserted": inserted})
+    except Exception as e:
+        print(f"❌ Apply-links failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.post("/auto-link")
@@ -1018,16 +1162,27 @@ def generate():
     try:
         content = generate_content_with_openai(prompt)
         featured_image = _resolve_featured_image(content.get("title", ""), featured_image_url)
-        
+
+        # Automatically hyperlink show/artist mentions against Broadway Plus pages
+        body = content["body"].strip()
+        inline_links = []
+        try:
+            body, inline_links = _apply_inline_links(body)
+            if inline_links:
+                print(f"🔗 Auto-linked {len(inline_links)} show/artist mentions inline")
+        except Exception as le:
+            print(f"⚠️  Inline auto-link skipped: {le}")
+
         # Return content for editing, DON'T create item yet
         return jsonify({
             "ok": True,
             "content": {
                 "title": content["title"].strip(),
                 "subtitle": content["subtitle"].strip(),
-                "body": content["body"].strip(),
+                "body": body,
                 "featured_image": featured_image
-            }
+            },
+            "inline_links": inline_links
         })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
