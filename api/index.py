@@ -224,6 +224,8 @@ def generate_content_with_openai(prompt: str) -> dict:
         "body-html: [700-1000 word HTML content with <h5> headings, <p> paragraphs, <strong> emphasis, "
         "and inline <sup><a href='URL'>[n]</a></sup> citations]\n\n"
         "Be informative and neutral. Cite sources inline with clickable superscript numbers.\n"
+        "The <sup> superscript link is the ONLY citation — NEVER follow it with the source in "
+        "parentheses, markdown like ([site.com](url)), or any visible URL.\n"
         "HYPERLINK RULE: whenever you mention a show, artist, or Broadway Plus page by name, make the name itself "
         "a clickable inline hyperlink using the name as the anchor text, e.g. "
         "Learn more: <a href='https://www.broadwayplus.com/shows/the-show'>The Show</a>.<sup><a href='...'>[n]</a></sup> "
@@ -276,6 +278,7 @@ def generate_content_with_openai(prompt: str) -> dict:
     try:
         print("📝 Attempting to parse title:/subtitle:/body-html: format...")
         data = _parse_simple_format(message_text)
+        data["body"] = _strip_citation_remnants(data["body"])
         print("✅ Successfully parsed simple format!")
         return data
     except Exception as e:
@@ -333,9 +336,22 @@ def generate_content_with_openai(prompt: str) -> dict:
     for key in ("title", "subtitle", "body"):
         if key not in data:
             raise RuntimeError("OpenAI JSON missing required keys")
-    
+
+    data["body"] = _strip_citation_remnants(data["body"])
+
+
     print(f"✅ Content generation complete!\n")
     return data
+
+
+def _strip_citation_remnants(html: str) -> str:
+    """Remove raw markdown source remnants the model appends after <sup> citations,
+    e.g. '([broadwayplus.com](https://...))' or '([site.com] (url), [other](url))'."""
+    link = r"\[[^\]\n]+\]\s*\(https?://[^)\s]+\)"
+    html = re.sub(rf"\s*\(\s*{link}(?:\s*[,;]\s*{link})*\s*\)", "", html)
+    # Any stray markdown link left outside parens: keep just the label text
+    html = re.sub(r"\[([^\]\n]+)\]\s*\(https?://[^)\s]+\)", r"\1", html)
+    return html
 
 
 def _parse_simple_format(text: str) -> dict:
